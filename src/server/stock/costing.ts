@@ -1,7 +1,7 @@
 import { desc, eq, sql } from "drizzle-orm";
 import { D, toDb2, toDb4, ZERO } from "@/lib/money";
 import type { Tx } from "@/db";
-import { items, stockMovements } from "@/db/schema";
+import { stockMovements } from "@/db/schema";
 
 export interface MovementInput {
   itemId: string;

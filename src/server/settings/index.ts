@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
-import { appSettings, companyProfile } from "@/db/schema";
+import { appSettings } from "@/db/schema";
 import { decryptSecret, encryptSecret } from "./secrets";
 
 export type MyinvoisEnvironment = "sandbox" | "production";
