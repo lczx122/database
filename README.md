@@ -1,36 +1,99 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Internal Accounting System
 
-## Getting Started
+Internal-use accounting web application for a Malaysian business, with
+LHDN **MyInvois e-Invoice** integration (sandbox and production).
 
-First, run the development server:
+Modules: sales invoicing (invoice / credit note / debit note) with e-Invoice
+submission, general ledger (double-entry, trial balance, P&L, balance sheet),
+AR/AP (receipts, payments, allocation, aging), stock (weighted-average
+costing), purchases (orders, supplier bills).
+
+## Stack
+
+Next.js 15 (App Router, server actions) · TypeScript · PostgreSQL 16 ·
+Drizzle ORM · Tailwind CSS · decimal.js for all money math ·
+`@react-pdf/renderer` for PDFs · Vitest.
+
+## Getting started
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+cp .env.example .env             # set APP_SECRET: openssl rand -hex 32
+docker compose up -d postgres    # or any PostgreSQL 16 with DATABASE_URL set
+pnpm install
+pnpm db:migrate
+pnpm db:seed                     # code lists, chart of accounts, demo data
+pnpm dev                         # http://localhost:3000
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Default login: `admin` / `admin123` — **change it immediately** in
+Settings → Users.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Production: `pnpm build && pnpm start`, or `docker compose --profile full up`
+(builds the app container; set `APP_SECRET` in `.env`).
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## e-Invoice (MyInvois) setup
 
-## Learn More
+1. **Sandbox credentials** — register your ERP on the MyInvois preprod portal
+   (https://preprod.myinvois.hasil.gov.my, via MyTax "View and Register ERP")
+   to obtain a Client ID + Secret. Enter them in **Settings → e-Invoice**
+   with environment **sandbox**.
+2. **Company profile** — fill in TIN, BRN, MSIC code, SST number (if
+   registered), address and phone in **Settings → Company Profile**. These
+   are mandatory e-Invoice fields.
+3. **Smoke test** — `pnpm tsx scripts/einvoice-smoke.ts` creates a test
+   invoice, submits it to the sandbox, polls until valid, prints the
+   validation link, then cancels it.
+4. **Digital signature (production)** — production requires signed v1.1
+   documents. Obtain an X.509 certificate from an IRBM-approved CA
+   (e.g. Pos Digicert, MSC Trustgate), then paste the certificate + private
+   key PEM in Settings → e-Invoice and enable signing. Sandbox accepts
+   unsigned v1.0 documents, so you can integrate before the cert arrives.
+5. **Go live** — switch environment to **production** (separate Client
+   ID/Secret, self-provisioned on the live MyInvois portal).
 
-To learn more about Next.js, take a look at the following resources:
+### How submission works
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Issue an invoice → the e-Invoice panel runs a pre-flight check of all
+mandatory fields → submit → the app sends a UBL 2.1 JSON document to
+`POST /api/v1.0/documentsubmissions` (optionally signed) → a background
+poller checks validation status every 30s → on **valid**, the LHDN UUID,
+long ID and validation-link QR appear on the invoice and its PDF. Valid
+e-invoices can be cancelled within 72 hours (with a reason); after that,
+issue a credit note. Invalid submissions show LHDN's structured errors and
+can be resubmitted after fixing the data.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Commands
 
-## Deploy on Vercel
+| Command | Purpose |
+|---|---|
+| `pnpm dev` / `pnpm build && pnpm start` | run the app |
+| `pnpm db:generate` | generate SQL migration from schema changes |
+| `pnpm db:migrate` | apply migrations |
+| `pnpm db:seed` | seed code lists + demo data (idempotent) |
+| `pnpm test` | unit tests (UBL builder, signer, GL posting, money) |
+| `pnpm lint` | ESLint |
+| `pnpm tsx scripts/einvoice-smoke.ts` | sandbox end-to-end test |
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Layout
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```
+src/db/schema/          tables (core, master, sales, einvoice, gl, arap, stock)
+src/server/einvoice/    UBL builder, signer, MyInvois API client, lifecycle
+src/server/gl/          posting engine + reports
+src/server/documents/   numbering, issue/cancel flows
+src/server/stock/       weighted-average costing
+src/app/(app)/          UI routes
+seeds/                  LHDN code lists, chart of accounts, demo data
+tests/                  Vitest suites
+```
+
+## Notes
+
+- All amounts are `NUMERIC` in PostgreSQL and `decimal.js` in code — no
+  float arithmetic anywhere.
+- Customer/company data is snapshotted onto documents at issue time; the
+  e-invoice always reflects issuance-time data.
+- MyInvois client secret and signing key are stored AES-256-GCM-encrypted
+  with `APP_SECRET`.
+- This is an internal tool, functionally inspired by commercial accounting
+  packages but built from scratch.
